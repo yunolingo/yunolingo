@@ -1,0 +1,54 @@
+#!/bin/sh
+# Subject: conventional type prefix, <=72 chars (AGENTS.md "Commits").
+subject=$(head -n 1 "$1")
+case "$subject" in
+"fixup! "* | "squash! "* | "Merge "* | "Revert "*) exit 0 ;;
+esac
+if ! printf '%s' "$subject" |
+	grep -qE '^(feat|fix|perf|docs|style|refactor|test|build|ci|chore)(\([a-z0-9_.-]+\))?: .'; then
+	echo "commit-msg: subject must be 'type(scope): description' (AGENTS.md)" >&2
+	exit 1
+fi
+# Lengths count characters, not bytes: drop UTF-8 continuation bytes
+# under the C locale, so the count matches in any locale and any awk.
+subject_length=$(printf '%s\n' "$subject" |
+	LC_ALL=C awk '{ gsub(/[\200-\277]/, ""); print length($0) }')
+if [ "$subject_length" -gt 72 ]; then
+	echo "commit-msg: subject is $subject_length chars; keep it to 72" >&2
+	exit 1
+fi
+long_line=$(LC_ALL=C awk '
+	substr($0, 1, 1) != "#" {
+		line = $0
+		gsub(/[\200-\277]/, "", line)
+		if (length(line) > 72) {
+			print NR ":" length(line)
+			exit
+		}
+	}
+' "$1")
+if [ -n "$long_line" ]; then
+	line_number=${long_line%%:*}
+	line_length=${long_line#*:}
+	echo "commit-msg: line $line_number is $line_length chars; keep it to 72" >&2
+	exit 1
+fi
+# Body paragraphs stay short (AGENTS.md "Commits"): a block of more than
+# 8 non-blank lines is a wall of text — break it at the next idea.
+long_paragraph=$(awk '
+	NR == 1 || substr($0, 1, 1) == "#" { next }
+	/^[[:space:]]*$/ { run = 0; next }
+	{
+		if (run == 0) start = NR
+		run++
+		if (run > 8) {
+			print start
+			exit
+		}
+	}
+' "$1")
+if [ -n "$long_paragraph" ]; then
+	echo "commit-msg: paragraph at line $long_paragraph runs past 8 lines;" \
+		"break it up (AGENTS.md 'Commits')" >&2
+	exit 1
+fi
